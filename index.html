@@ -33,6 +33,7 @@
     <!-- FIREBASE AUTHENTICATION -->
     <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore-compat.js"></script>
 
     <style>
 
@@ -348,7 +349,27 @@
             }
         }
 
+
+        #btnImportarPlanilha { display: none; background: #7c2d12; }
+        .admin-badge { display:none; color:#166534; background:#dcfce7; border-radius:999px; padding:6px 10px; font-size:12px; margin-left:8px; }
+        #statusSistema { display:none; padding:8px 12px; font-size:13px; color:#475569; background:#fff; }
+        .modal-edicao { display:none; position:fixed; inset:0; z-index:100000; background:rgba(15,23,42,.72); padding:18px; overflow:auto; }
+        .modal-edicao-conteudo { max-width:620px; margin:25px auto; padding:22px; background:#fff; border-radius:14px; box-shadow:0 15px 50px rgba(0,0,0,.3); }
+        .modal-edicao-conteudo h2 { margin-bottom:16px; color:#0f172a; }
+        .form-edicao { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+        .form-edicao label { display:block; font-size:13px; color:#334155; font-weight:bold; }
+        .form-edicao input, .form-edicao select { width:100%; padding:10px; margin-top:5px; border:1px solid #cbd5e1; border-radius:8px; }
+        .form-edicao .campo-largo { grid-column:1 / -1; }
+        .acoes-edicao { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
+        .acoes-edicao button { border:0; border-radius:8px; padding:11px 15px; cursor:pointer; }
+        #btnSalvarEdicao { background:#0f172a; color:white; }
+        #btnCancelarEdicao { background:#e2e8f0; color:#0f172a; }
+        .btn-editar-ponto { margin-top:12px; padding:8px 10px; border:0; border-radius:7px; background:#0f172a; color:white; cursor:pointer; }
+        @media(max-width:600px){ .form-edicao { grid-template-columns:1fr; } .form-edicao .campo-largo { grid-column:auto; } header h2 { font-size:15px !important; } }
+
     </style>
+</head>
+<body>
 
 <!-- =========================================
      TELA DE LOGIN
@@ -387,11 +408,7 @@
         </button>
 
         <p id="loginErro"></p>
-<p class="login-contato">
-    🔒 Acesso restrito.<br>
-    Para solicitar acesso ao sistema, entre em contato com o desenvolvedor:
-    <strong>(97) 98435-6149</strong>
-</p>
+
     </div>
 
 </div>
@@ -421,6 +438,8 @@
             ▲
 
         </button>
+
+        <span id="adminBadge" class="admin-badge">Administrador</span>
 
         <button id="btnSair" type="button">
 
@@ -501,12 +520,38 @@
     <button onclick="carregarDados()">
         🔄 Atualizar
     </button>
+    <button id="btnImportarPlanilha" type="button">Importar planilha inicial</button>
 
 </div>
+
+<div id="statusSistema" role="status">Aguardando autenticação...</div>
 
 <!-- MAPA -->
 
 <div id="map"></div>
+
+<div id="modalEdicao" class="modal-edicao" role="dialog" aria-modal="true" aria-labelledby="tituloEdicao">
+  <div class="modal-edicao-conteudo">
+    <h2 id="tituloEdicao">Editar estabelecimento</h2>
+    <form id="formEdicao">
+      <div class="form-edicao">
+        <label>Nome fantasia<input id="edNomeFantasia" maxlength="250"></label>
+        <label>Razão social<input id="edNome" maxlength="250"></label>
+        <label>CNPJ<input id="edCNPJ" maxlength="30"></label>
+        <label>Categoria<input id="edCategoria" maxlength="150"></label>
+        <label class="campo-largo">Endereço<input id="edEndereco" maxlength="300"></label>
+        <label>Status de licenciamento<select id="edLicenciado"><option value="sim">Licenciado</option><option value="nao">Irregular</option><option value="pendente">Pendente</option></select></label>
+        <label>Latitude<input id="edLatitude" type="number" step="any" required></label>
+        <label>Longitude<input id="edLongitude" type="number" step="any" required></label>
+        <label class="campo-largo">Link da foto<input id="edFoto" type="url" maxlength="1000" placeholder="https://..."></label>
+      </div>
+      <div class="acoes-edicao">
+        <button id="btnCancelarEdicao" type="button">Cancelar</button>
+        <button id="btnSalvarEdicao" type="submit">Salvar alterações</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <script>
 
@@ -537,6 +582,10 @@
     firebase.initializeApp(firebaseConfig);
 
     const auth = firebase.auth();
+    const db = firebase.firestore();
+    const colecaoEstabelecimentos = db.collection("estabelecimentos");
+    let usuarioEhAdmin = false;
+    let estabelecimentoEmEdicao = null;
 
     // =========================================
     // ELEMENTOS DO LOGIN
@@ -579,6 +628,7 @@
 
         document.getElementById("map")
             .style.display = "block";
+        document.getElementById("statusSistema").style.display = "block";
 
         setTimeout(() => {
 
@@ -603,6 +653,7 @@
 
         document.getElementById("map")
             .style.display = "none";
+        document.getElementById("statusSistema").style.display = "none";
 
         markersLayer.clearLayers();
 
@@ -716,11 +767,10 @@
     );
 
     // =========================================
-    // LINK DA PLANILHA
+    // PLANILHA LEGADA: USADA APENAS NA IMPORTAÇÃO INICIAL
     // =========================================
 
-    const sheetURL =
-        "https://docs.google.com/spreadsheets/d/e/2PACX-1vTOM8TKzlEsV-44u5CVmcQvMd70TZlOV6r-Y3YTqWtj0oWlFVuck-wbNU18JQEmHqEKfwd3gbIc_zvt/pub?output=csv";
+    const sheetURL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTOM8TKzlEsV-44u5CVmcQvMd70TZlOV6r-Y3YTqWtj0oWlFVuck-wbNU18JQEmHqEKfwd3gbIc_zvt/pub?output=csv";
 
     // =========================================
     // MAPA
@@ -900,88 +950,186 @@
     let dadosGlobais = [];
 
     // =========================================
-    // CARREGAR DADOS
+    // CARREGAR DADOS DO FIRESTORE
     // =========================================
 
+    function informar(mensagem) {
+        document.getElementById("statusSistema").textContent = mensagem;
+    }
+
     async function carregarDados(){
-
-        try{
-
-            const response =
-                await fetch(sheetURL);
-
-            if(!response.ok){
-
-                throw new Error(
-                    "Servidor retornou HTTP " +
-                    response.status
-                );
+        try {
+            informar("Carregando estabelecimentos do banco de dados...");
+            const snapshot = await colecaoEstabelecimentos.get();
+            dadosGlobais = snapshot.docs.map(doc => ({ ...doc.data(), _id: doc.id }));
+            document.getElementById("btnImportarPlanilha").style.display =
+                (usuarioEhAdmin && snapshot.empty) ? "inline-block" : "none";
+            if (snapshot.empty) {
+                informar(usuarioEhAdmin
+                    ? "O Firestore ainda está vazio. Use ‘Importar planilha inicial’ para carregar os dados existentes."
+                    : "Ainda não há estabelecimentos cadastrados no Firestore. Solicite ao administrador a importação inicial.");
+            } else {
+                informar(`${dadosGlobais.length} estabelecimento(s) carregado(s) do Firestore.`);
             }
-
-            const csv =
-                await response.text();
-
-            const resultado =
-                Papa.parse(csv, {
-
-                    header: true,
-
-                    skipEmptyLines: true
-                });
-
-            if(
-                resultado.errors &&
-                resultado.errors.length > 0
-            ){
-
-                console.warn(
-                    "Avisos do PapaParse:",
-                    resultado.errors
-                );
-            }
-
-            dadosGlobais =
-                resultado.data;
-
-            aplicarFiltros(
-                dadosGlobais
-            );
-
-            console.log(
-                "Planilha carregada:",
-                dadosGlobais.length,
-                "estabelecimentos"
-            );
-
-        }
-        catch(erro){
-
-            console.error(
-                "Erro ao carregar planilha:",
-                erro
-            );
-
-            if(
-                dadosGlobais.length === 0
-            ){
-
-                alert(
-                    "Não foi possível carregar os dados da planilha."
-                );
-
-            }
-            else{
-
-                console.warn(
-                    "Falha na atualização. Mantendo os dados atuais."
-                );
-
-                aplicarFiltros(
-                    dadosGlobais
-                );
-            }
+            aplicarFiltros(dadosGlobais);
+        } catch (erro) {
+            console.error("Erro ao carregar Firestore:", erro);
+            informar("Falha ao carregar dados. Confira a conexão e as regras do Firestore.");
+            alert("Não foi possível carregar os estabelecimentos do Firestore. Confira as regras de segurança e a conexão.");
         }
     }
+
+    function gerarIdEstabelecimento(est, indice) {
+        // Inclui endereço, coordenadas e índice para evitar que dois pontos
+        // com o mesmo CNPJ sejam fundidos em um único documento.
+        const cnpj = String(est.CNPJ || "").replace(/\D/g, "");
+        const base = [cnpj, est.NomeFantasia || est.Nome || "sem_nome", est.Endereco || "", est.Latitude || "", est.Longitude || "", indice]
+            .join("|").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+        let hash = 2166136261;
+        for (let i = 0; i < base.length; i++) {
+            hash ^= base.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
+        }
+        return (cnpj ? "cnpj_" + cnpj + "_" : "est_") + (hash >>> 0).toString(16);
+    }
+
+    async function importarPlanilhaInicial() {
+        if (!usuarioEhAdmin || !auth.currentUser) {
+            alert("Somente o administrador pode importar a planilha.");
+            return;
+        }
+        if (!confirm("Importar a planilha publicada para o Firestore? Faça isso apenas na migração inicial. A importação não deve ser repetida após começar a editar os dados.")) return;
+        const botao = document.getElementById("btnImportarPlanilha");
+        botao.disabled = true;
+        botao.textContent = "Importando...";
+        try {
+            const existente = await colecaoEstabelecimentos.limit(1).get();
+            if (!existente.empty) {
+                alert("O Firestore já contém dados. A importação inicial foi bloqueada para evitar sobrescrever alterações.");
+                await carregarDados();
+                return;
+            }
+            const response = await fetch(sheetURL);
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const csv = await response.text();
+            const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
+            if (!parsed.data || !parsed.data.length) throw new Error("A planilha não contém registros.");
+            let batch = db.batch();
+            let noBatch = 0;
+            let importados = 0;
+            for (let i = 0; i < parsed.data.length; i++) {
+                const est = parsed.data[i];
+                if (!String(est.NomeFantasia || est.Nome || est.CNPJ || "").trim()) continue;
+                const id = gerarIdEstabelecimento(est, i);
+                batch.set(colecaoEstabelecimentos.doc(id), {
+                    ...est,
+                    NomeFantasia: String(est.NomeFantasia || ""),
+                    Nome: String(est.Nome || ""),
+                    CNPJ: String(est.CNPJ || ""),
+                    Endereco: String(est.Endereco || ""),
+                    Categoria: String(est.Categoria || ""),
+                    Licenciado: normalizarStatus(est.Licenciado),
+                    Latitude: String(est.Latitude || ""),
+                    Longitude: String(est.Longitude || ""),
+                    Foto: String(est.Foto || ""),
+                    criadoEm: firebase.firestore.FieldValue.serverTimestamp(),
+                    criadoPor: auth.currentUser.uid,
+                    origem: "importacao_planilha_csv"
+                });
+                noBatch++;
+                importados++;
+                if (noBatch === 450) {
+                    await batch.commit();
+                    batch = db.batch();
+                    noBatch = 0;
+                }
+            }
+            if (noBatch > 0) await batch.commit();
+            alert(`Importação concluída: ${importados} registro(s) enviados ao Firestore.`);
+            await carregarDados();
+        } catch (erro) {
+            console.error("Erro na importação inicial:", erro);
+            alert("A importação falhou. Confira o console e o Firestore. Se parte dos dados tiver sido gravada, peça ao administrador para verificar a coleção antes de tentar novamente.");
+        } finally {
+            botao.disabled = false;
+            botao.textContent = "Importar planilha inicial";
+        }
+    }
+
+    document.getElementById("btnImportarPlanilha").addEventListener("click", importarPlanilhaInicial);
+
+    function abrirEditor(id) {
+        if (!usuarioEhAdmin) {
+            alert("Somente o administrador pode editar estabelecimentos.");
+            return;
+        }
+        const est = dadosGlobais.find(item => item._id === id);
+        if (!est) return;
+        estabelecimentoEmEdicao = est;
+        document.getElementById("edNomeFantasia").value = est.NomeFantasia || "";
+        document.getElementById("edNome").value = est.Nome || "";
+        document.getElementById("edCNPJ").value = est.CNPJ || "";
+        document.getElementById("edCategoria").value = est.Categoria || "";
+        document.getElementById("edEndereco").value = est.Endereco || "";
+        document.getElementById("edLicenciado").value = normalizarStatus(est.Licenciado);
+        document.getElementById("edLatitude").value = est.Latitude || "";
+        document.getElementById("edLongitude").value = est.Longitude || "";
+        document.getElementById("edFoto").value = est.Foto || "";
+        document.getElementById("modalEdicao").style.display = "block";
+    }
+
+    function fecharEditor() {
+        document.getElementById("modalEdicao").style.display = "none";
+        estabelecimentoEmEdicao = null;
+    }
+    document.getElementById("btnCancelarEdicao").addEventListener("click", fecharEditor);
+    document.getElementById("modalEdicao").addEventListener("click", e => {
+        if (e.target.id === "modalEdicao") fecharEditor();
+    });
+
+    document.getElementById("formEdicao").addEventListener("submit", async evento => {
+        evento.preventDefault();
+        if (!usuarioEhAdmin || !estabelecimentoEmEdicao || !auth.currentUser) {
+            alert("Acesso negado.");
+            return;
+        }
+        const lat = Number(document.getElementById("edLatitude").value);
+        const lng = Number(document.getElementById("edLongitude").value);
+        if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+            alert("Informe latitude entre -90 e 90 e longitude entre -180 e 180.");
+            return;
+        }
+        const botao = document.getElementById("btnSalvarEdicao");
+        botao.disabled = true;
+        botao.textContent = "Salvando...";
+        const alteracoes = {
+            NomeFantasia: document.getElementById("edNomeFantasia").value.trim(),
+            Nome: document.getElementById("edNome").value.trim(),
+            CNPJ: document.getElementById("edCNPJ").value.trim(),
+            Categoria: document.getElementById("edCategoria").value.trim(),
+            Endereco: document.getElementById("edEndereco").value.trim(),
+            Licenciado: document.getElementById("edLicenciado").value,
+            Latitude: String(lat),
+            Longitude: String(lng),
+            Foto: document.getElementById("edFoto").value.trim(),
+            atualizadoEm: firebase.firestore.FieldValue.serverTimestamp(),
+            atualizadoPor: auth.currentUser.uid
+        };
+        try {
+            await colecaoEstabelecimentos.doc(estabelecimentoEmEdicao._id).update(alteracoes);
+            dadosGlobais = dadosGlobais.map(est => est._id === estabelecimentoEmEdicao._id ? { ...est, ...alteracoes } : est);
+            fecharEditor();
+            aplicarFiltros(dadosGlobais);
+            informar("Alterações salvas no Firestore.");
+        } catch (erro) {
+            console.error("Erro ao salvar estabelecimento:", erro);
+            alert("Não foi possível salvar. Confirme se seu usuário está cadastrado como administrador nas regras do Firestore.");
+        } finally {
+            botao.disabled = false;
+            botao.textContent = "Salvar alterações";
+        }
+    });
+
 // =========================================
 // NORMALIZAR STATUS
 // =========================================
@@ -1238,6 +1386,7 @@ filtrados.forEach(est => {
                     <b>📂 Categoria:</b><br>
 
                     ${escapeHTML(est.Categoria)}
+                    ${usuarioEhAdmin ? `<br><button type="button" class="btn-editar-ponto" data-editar-id="${escapeHTML(est._id)}">✏️ Editar cadastro</button>` : ""}
 
                 </div>
 
@@ -1263,6 +1412,10 @@ const marker = L.marker(
 );
 
             marker.bindPopup(popup);
+            marker.on("popupopen", evento => {
+                const botaoEditar = evento.popup.getElement().querySelector("[data-editar-id]");
+                if (botaoEditar) botaoEditar.addEventListener("click", () => abrirEditor(botaoEditar.dataset.editarId));
+            });
 
             markersLayer.addLayer(marker);
 
@@ -1395,26 +1548,26 @@ document
     // ESTADO DA AUTENTICAÇÃO
     // =========================================
 
-    auth.onAuthStateChanged(
-        user => {
-
-            if(user){
-
-                mostrarSistema();
-
-                ativarLocalizacao();
-
-                carregarDados();
-
+    auth.onAuthStateChanged(async user => {
+        if (user) {
+            try {
+                const adminDoc = await db.collection("admins").doc(user.uid).get();
+                usuarioEhAdmin = adminDoc.exists;
+            } catch (erro) {
+                console.error("Não foi possível verificar administrador:", erro);
+                usuarioEhAdmin = false;
             }
-            else{
-
-                ocultarSistema();
-
-            }
-
+            document.getElementById("adminBadge").style.display = usuarioEhAdmin ? "inline-block" : "none";
+            mostrarSistema();
+            ativarLocalizacao();
+            await carregarDados();
+        } else {
+            usuarioEhAdmin = false;
+            document.getElementById("adminBadge").style.display = "none";
+            document.getElementById("btnImportarPlanilha").style.display = "none";
+            ocultarSistema();
         }
-    );
+    });
 
     // =========================================
     // ATUALIZAÇÃO AUTOMÁTICA
