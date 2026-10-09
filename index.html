@@ -363,6 +363,14 @@
         .acoes-edicao { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
         .acoes-edicao button { border:0; border-radius:8px; padding:11px 15px; cursor:pointer; }
         #btnSalvarEdicao { background:#0f172a; color:white; }
+        #btnEscolherNoMapa { background:#0369a1; color:white; }
+        body.escolhendo-localizacao #map { cursor: crosshair !important; }
+        .aviso-escolher-localizacao {
+            display:none; position:fixed; z-index:100001; top:72px; left:50%;
+            transform:translateX(-50%); max-width:calc(100% - 24px);
+            padding:12px 16px; border-radius:10px; background:#075985; color:white;
+            box-shadow:0 8px 24px rgba(0,0,0,.25); font-size:14px; text-align:center;
+        }
         #btnCancelarEdicao { background:#e2e8f0; color:#0f172a; }
         .btn-editar-ponto { margin-top:12px; padding:8px 10px; border:0; border-radius:7px; background:#0f172a; color:white; cursor:pointer; }
         @media(max-width:600px){ .form-edicao { grid-template-columns:1fr; } .form-edicao .campo-largo { grid-column:auto; } header h2 { font-size:15px !important; } }
@@ -529,6 +537,9 @@
 <!-- MAPA -->
 
 <div id="map"></div>
+ <div id="avisoEscolherLocalizacao" class="aviso-escolher-localizacao" role="status">
+   Clique no local correto no mapa. Pressione Esc para cancelar.
+ </div>
 
 <div id="modalEdicao" class="modal-edicao" role="dialog" aria-modal="true" aria-labelledby="tituloEdicao">
   <div class="modal-edicao-conteudo">
@@ -546,6 +557,7 @@
         <label class="campo-largo">Link da foto<input id="edFoto" type="url" maxlength="1000" placeholder="https://..."></label>
       </div>
       <div class="acoes-edicao">
+        <button id="btnEscolherNoMapa" type="button">📍 Ajustar no mapa</button>
         <button id="btnCancelarEdicao" type="button">Cancelar</button>
         <button id="btnSalvarEdicao" type="submit">Salvar alterações</button>
       </div>
@@ -1058,6 +1070,82 @@
 
     document.getElementById("btnImportarPlanilha").addEventListener("click", importarPlanilhaInicial);
 
+    // Seleção visual da nova posição diretamente no mapa.
+    let modoEscolherLocalizacao = false;
+    let marcadorPreviaLocalizacao = null;
+    let posicaoOriginalEdicao = null;
+
+    function encerrarModoEscolha() {
+        modoEscolherLocalizacao = false;
+        document.body.classList.remove("escolhendo-localizacao");
+        document.getElementById("avisoEscolherLocalizacao").style.display = "none";
+        map.off("click", receberCliqueParaLocalizacao);
+        document.removeEventListener("keydown", teclaCancelarLocalizacao);
+    }
+
+    function removerPreviaLocalizacao() {
+        if (marcadorPreviaLocalizacao) {
+            map.removeLayer(marcadorPreviaLocalizacao);
+            marcadorPreviaLocalizacao = null;
+        }
+    }
+
+    function teclaCancelarLocalizacao(evento) {
+        if (evento.key === "Escape" && modoEscolherLocalizacao) {
+            encerrarModoEscolha();
+            removerPreviaLocalizacao();
+            if (posicaoOriginalEdicao) {
+                document.getElementById("edLatitude").value = posicaoOriginalEdicao.lat;
+                document.getElementById("edLongitude").value = posicaoOriginalEdicao.lng;
+            }
+            posicaoOriginalEdicao = null;
+            document.getElementById("modalEdicao").style.display = "block";
+        }
+    }
+
+    function receberCliqueParaLocalizacao(evento) {
+        if (!modoEscolherLocalizacao || !estabelecimentoEmEdicao) return;
+
+        const lat = evento.latlng.lat;
+        const lng = evento.latlng.lng;
+        document.getElementById("edLatitude").value = lat.toFixed(7);
+        document.getElementById("edLongitude").value = lng.toFixed(7);
+
+        removerPreviaLocalizacao();
+        marcadorPreviaLocalizacao = L.marker([lat, lng], {
+            icon: L.divIcon({
+                html: '<div style="background:#2563eb;width:22px;height:22px;border-radius:50%;border:4px solid white;box-shadow:0 0 8px rgba(0,0,0,.6)"></div>',
+                className: "",
+                iconSize: [22, 22],
+                iconAnchor: [11, 11]
+            }),
+            zIndexOffset: 10000
+        }).addTo(map).bindPopup("Nova posição (ainda não salva)").openPopup();
+
+        encerrarModoEscolha();
+        posicaoOriginalEdicao = null;
+        document.getElementById("modalEdicao").style.display = "block";
+    }
+
+    document.getElementById("btnEscolherNoMapa").addEventListener("click", () => {
+        if (!usuarioEhAdmin || !estabelecimentoEmEdicao) {
+            alert("Somente o administrador pode alterar a localização.");
+            return;
+        }
+
+        posicaoOriginalEdicao = {
+            lat: document.getElementById("edLatitude").value,
+            lng: document.getElementById("edLongitude").value
+        };
+        document.getElementById("modalEdicao").style.display = "none";
+        modoEscolherLocalizacao = true;
+        document.body.classList.add("escolhendo-localizacao");
+        document.getElementById("avisoEscolherLocalizacao").style.display = "block";
+        map.on("click", receberCliqueParaLocalizacao);
+        document.addEventListener("keydown", teclaCancelarLocalizacao);
+        map.invalidateSize();
+    });
+
     function abrirEditor(id) {
         if (!usuarioEhAdmin) {
             alert("Somente o administrador pode editar estabelecimentos.");
@@ -1079,10 +1167,16 @@
     }
 
     function fecharEditor() {
+        encerrarModoEscolha();
+        removerPreviaLocalizacao();
+        posicaoOriginalEdicao = null;
         document.getElementById("modalEdicao").style.display = "none";
         estabelecimentoEmEdicao = null;
     }
-    document.getElementById("btnCancelarEdicao").addEventListener("click", fecharEditor);
+    document.getElementById("btnCancelarEdicao").addEventListener("click", () => {
+        removerPreviaLocalizacao();
+        fecharEditor();
+    });
     document.getElementById("modalEdicao").addEventListener("click", e => {
         if (e.target.id === "modalEdicao") fecharEditor();
     });
@@ -1117,6 +1211,7 @@
         };
         try {
             await colecaoEstabelecimentos.doc(estabelecimentoEmEdicao._id).update(alteracoes);
+            removerPreviaLocalizacao();
             dadosGlobais = dadosGlobais.map(est => est._id === estabelecimentoEmEdicao._id ? { ...est, ...alteracoes } : est);
             fecharEditor();
             aplicarFiltros(dadosGlobais);
@@ -1425,14 +1520,10 @@ const marker = L.marker(
 
 
         // AJUSTA ZOOM
-        // layerGroup não possui getBounds(); calculamos os limites
-        // a partir das coordenadas dos marcadores.
-
         const pontos = markersLayer.getLayers();
 
         if (pontos.length === 1) {
             map.setView(pontos[0].getLatLng(), 15);
-
         } else if (pontos.length > 1) {
             const coordenadasPontos = pontos
                 .filter(ponto => typeof ponto.getLatLng === "function")
@@ -1440,10 +1531,8 @@ const marker = L.marker(
 
             if (coordenadasPontos.length === 1) {
                 map.setView(coordenadasPontos[0], 15);
-
             } else if (coordenadasPontos.length > 1) {
                 const bounds = L.latLngBounds(coordenadasPontos);
-
                 if (bounds.isValid()) {
                     map.fitBounds(bounds, {
                         padding: [40, 40],
