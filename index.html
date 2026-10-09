@@ -1424,35 +1424,35 @@ const marker = L.marker(
     });
 
 
+        // AJUSTA ZOOM
+        // layerGroup não possui getBounds(); calculamos os limites
+        // a partir das coordenadas dos marcadores.
 
- // AJUSTA ZOOM
+        const pontos = markersLayer.getLayers();
 
-const pontos = markersLayer.getLayers();
+        if (pontos.length === 1) {
+            map.setView(pontos[0].getLatLng(), 15);
 
-if (pontos.length === 1) {
-    const ponto = pontos[0].getLatLng();
+        } else if (pontos.length > 1) {
+            const coordenadasPontos = pontos
+                .filter(ponto => typeof ponto.getLatLng === "function")
+                .map(ponto => ponto.getLatLng());
 
-    map.setView(ponto, 15);
+            if (coordenadasPontos.length === 1) {
+                map.setView(coordenadasPontos[0], 15);
 
-} else if (pontos.length > 1) {
-    const coordenadas = pontos
-        .filter(ponto => typeof ponto.getLatLng === "function")
-        .map(ponto => ponto.getLatLng());
+            } else if (coordenadasPontos.length > 1) {
+                const bounds = L.latLngBounds(coordenadasPontos);
 
-    if (coordenadas.length === 1) {
-        map.setView(coordenadas[0], 15);
-
-    } else if (coordenadas.length > 1) {
-        const bounds = L.latLngBounds(coordenadas);
-
-        if (bounds.isValid()) {
-            map.fitBounds(bounds, {
-                padding: [40, 40],
-                maxZoom: 15
-            });
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds, {
+                        padding: [40, 40],
+                        maxZoom: 15
+                    });
+                }
+            }
         }
     }
-}
 
     // =========================================
     // EVENTOS
