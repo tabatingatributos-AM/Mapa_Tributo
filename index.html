@@ -1443,25 +1443,8 @@ const marker = L.marker(
         else if(pontos.length > 1){
 
             const bounds =
-                const pontos = markersLayer.getLayers();
+                markersLayer.getBounds();
 
-if (pontos.length > 0) {
-    const bounds = L.latLngBounds(
-        pontos.map(ponto => {
-            if (typeof ponto.getLatLng === "function") {
-                return ponto.getLatLng();
-            }
-            return ponto.getBounds();
-        })
-    );
-
-    if (bounds.isValid()) {
-        map.fitBounds(bounds, {
-            padding: [40, 40],
-            maxZoom: 15
-        });
-    }
-}
             map.fitBounds(
                 bounds,
                 {
