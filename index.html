@@ -1424,36 +1424,35 @@ const marker = L.marker(
     });
 
 
-        // AJUSTA ZOOM
 
-        const pontos =
-            markersLayer.getLayers();
+ // AJUSTA ZOOM
 
-        if(pontos.length === 1){
+const pontos = markersLayer.getLayers();
 
-            const ponto =
-                pontos[0].getLatLng();
+if (pontos.length === 1) {
+    const ponto = pontos[0].getLatLng();
 
-            map.setView(
-                ponto,
-                15
-            );
+    map.setView(ponto, 15);
 
-        }
-        else if(pontos.length > 1){
+} else if (pontos.length > 1) {
+    const coordenadas = pontos
+        .filter(ponto => typeof ponto.getLatLng === "function")
+        .map(ponto => ponto.getLatLng());
 
-            const bounds =
-                markersLayer.getBounds();
+    if (coordenadas.length === 1) {
+        map.setView(coordenadas[0], 15);
 
-            map.fitBounds(
-                bounds,
-                {
-                    padding: [40, 40],
-                    maxZoom: 15
-                }
-            );
+    } else if (coordenadas.length > 1) {
+        const bounds = L.latLngBounds(coordenadas);
+
+        if (bounds.isValid()) {
+            map.fitBounds(bounds, {
+                padding: [40, 40],
+                maxZoom: 15
+            });
         }
     }
+}
 
     // =========================================
     // EVENTOS
