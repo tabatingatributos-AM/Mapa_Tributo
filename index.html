@@ -1445,23 +1445,12 @@ const marker = L.marker(
             const bounds =
                 markersLayer.getBounds();
 
-            
-const bounds = L.latLngBounds();
-
-markersLayer.eachLayer(function (layer) {
-  if (typeof layer.getLatLng === "function") {
-    bounds.extend(layer.getLatLng());
-  } else if (typeof layer.getBounds === "function") {
-    bounds.extend(layer.getBounds());
-  }
-});
-
-if (bounds.isValid()) {
-  map.fitBounds(bounds, {
-    padding: [40, 40],
-    maxZoom: 15
-  });
-}
+            map.fitBounds(
+                bounds,
+                {
+                    padding: [40, 40],
+                    maxZoom: 15
+                }
             );
         }
     }
