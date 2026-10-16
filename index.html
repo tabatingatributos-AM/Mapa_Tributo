@@ -1592,10 +1592,66 @@ const [novaLat, novaLng] =
 
 const marker = L.marker(
     [novaLat, novaLng],
-    { icon }
+    {
+        icon,
+        draggable: usuarioEhAdmin
+    }
 );
 
-            marker.bindPopup(popup);
+marker.bindPopup(popup);
+
+marker.on("popupopen", evento => {
+    const botaoEditar = evento.popup
+        .getElement()
+        .querySelector("[data-editar-id]");
+
+    if (botaoEditar) {
+        botaoEditar.addEventListener("click", () => {
+            abrirEditor(botaoEditar.dataset.editarId);
+        });
+    }
+});
+
+// Permite ao administrador alterar a localização arrastando o ponto
+if (usuarioEhAdmin) {
+    marker.on("dragend", async () => {
+        const posicao = marker.getLatLng();
+
+        try {
+            await colecaoEstabelecimentos
+                .doc(est._id)
+                .update({
+                    Latitude: String(posicao.lat),
+                    Longitude: String(posicao.lng),
+                    atualizadoEm: firebase.firestore.FieldValue.serverTimestamp(),
+                    atualizadoPor: auth.currentUser.uid
+                });
+
+            dadosGlobais = dadosGlobais.map(item =>
+                item._id === est._id
+                    ? {
+                        ...item,
+                        Latitude: String(posicao.lat),
+                        Longitude: String(posicao.lng)
+                    }
+                    : item
+            );
+
+            informar("Localização atualizada no Firestore.");
+            aplicarFiltros(dadosGlobais);
+
+        } catch (erro) {
+            console.error("Erro ao atualizar localização:", erro);
+
+            alert(
+                "Não foi possível salvar a nova localização. " +
+                "O marcador será reposicionado. Verifique sua conexão e suas permissões."
+            );
+
+            marker.setLatLng([novaLat, novaLng]);
+        }
+    });
+}
             marker.on("popupopen", evento => {
                 const botaoEditar = evento.popup.getElement().querySelector("[data-editar-id]");
                 if (botaoEditar) botaoEditar.addEventListener("click", () => abrirEditor(botaoEditar.dataset.editarId));
