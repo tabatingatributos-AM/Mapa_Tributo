@@ -351,6 +351,7 @@
 
 
         #btnImportarPlanilha { display: none; background: #7c2d12; }
+        #btnSincronizarPlanilha { display: none; background: #166534; }
         .admin-badge { display:none; color:#166534; background:#dcfce7; border-radius:999px; padding:6px 10px; font-size:12px; margin-left:8px; }
         #statusSistema { display:none; padding:8px 12px; font-size:13px; color:#475569; background:#fff; }
         .modal-edicao { display:none; position:fixed; inset:0; z-index:100000; background:rgba(15,23,42,.72); padding:18px; overflow:auto; }
@@ -363,14 +364,6 @@
         .acoes-edicao { display:flex; justify-content:flex-end; gap:10px; margin-top:18px; }
         .acoes-edicao button { border:0; border-radius:8px; padding:11px 15px; cursor:pointer; }
         #btnSalvarEdicao { background:#0f172a; color:white; }
-        #btnEscolherNoMapa { background:#0369a1; color:white; }
-        body.escolhendo-localizacao #map { cursor: crosshair !important; }
-        .aviso-escolher-localizacao {
-            display:none; position:fixed; z-index:100001; top:72px; left:50%;
-            transform:translateX(-50%); max-width:calc(100% - 24px);
-            padding:12px 16px; border-radius:10px; background:#075985; color:white;
-            box-shadow:0 8px 24px rgba(0,0,0,.25); font-size:14px; text-align:center;
-        }
         #btnCancelarEdicao { background:#e2e8f0; color:#0f172a; }
         .btn-editar-ponto { margin-top:12px; padding:8px 10px; border:0; border-radius:7px; background:#0f172a; color:white; cursor:pointer; }
         @media(max-width:600px){ .form-edicao { grid-template-columns:1fr; } .form-edicao .campo-largo { grid-column:auto; } header h2 { font-size:15px !important; } }
@@ -529,6 +522,7 @@
         🔄 Atualizar
     </button>
     <button id="btnImportarPlanilha" type="button">Importar planilha inicial</button>
+    <button id="btnSincronizarPlanilha" type="button" style="display:none; background:#166534;">🔄 Sincronizar novos da planilha</button>
 
 </div>
 
@@ -537,9 +531,6 @@
 <!-- MAPA -->
 
 <div id="map"></div>
- <div id="avisoEscolherLocalizacao" class="aviso-escolher-localizacao" role="status">
-   Clique no local correto no mapa. Pressione Esc para cancelar.
- </div>
 
 <div id="modalEdicao" class="modal-edicao" role="dialog" aria-modal="true" aria-labelledby="tituloEdicao">
   <div class="modal-edicao-conteudo">
@@ -557,7 +548,6 @@
         <label class="campo-largo">Link da foto<input id="edFoto" type="url" maxlength="1000" placeholder="https://..."></label>
       </div>
       <div class="acoes-edicao">
-        <button id="btnEscolherNoMapa" type="button">📍 Ajustar no mapa</button>
         <button id="btnCancelarEdicao" type="button">Cancelar</button>
         <button id="btnSalvarEdicao" type="submit">Salvar alterações</button>
       </div>
@@ -976,6 +966,8 @@
             dadosGlobais = snapshot.docs.map(doc => ({ ...doc.data(), _id: doc.id }));
             document.getElementById("btnImportarPlanilha").style.display =
                 (usuarioEhAdmin && snapshot.empty) ? "inline-block" : "none";
+            document.getElementById("btnSincronizarPlanilha").style.display =
+                (usuarioEhAdmin && !snapshot.empty) ? "inline-block" : "none";
             if (snapshot.empty) {
                 informar(usuarioEhAdmin
                     ? "O Firestore ainda está vazio. Use ‘Importar planilha inicial’ para carregar os dados existentes."
@@ -1070,81 +1062,185 @@
 
     document.getElementById("btnImportarPlanilha").addEventListener("click", importarPlanilhaInicial);
 
-    // Seleção visual da nova posição diretamente no mapa.
-    let modoEscolherLocalizacao = false;
-    let marcadorPreviaLocalizacao = null;
-    let posicaoOriginalEdicao = null;
+    // =========================================
+    // SINCRONIZAR SOMENTE NOVOS REGISTROS DA PLANILHA
+    // Não atualiza nem sobrescreve documentos já existentes no Firestore.
+    // =========================================
 
-    function encerrarModoEscolha() {
-        modoEscolherLocalizacao = false;
-        document.body.classList.remove("escolhendo-localizacao");
-        document.getElementById("avisoEscolherLocalizacao").style.display = "none";
-        map.off("click", receberCliqueParaLocalizacao);
-        document.removeEventListener("keydown", teclaCancelarLocalizacao);
+    function normalizarChave(valor) {
+        return String(valor || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .trim()
+            .replace(/\s+/g, " ");
     }
 
-    function removerPreviaLocalizacao() {
-        if (marcadorPreviaLocalizacao) {
-            map.removeLayer(marcadorPreviaLocalizacao);
-            marcadorPreviaLocalizacao = null;
+    function cnpjSomenteDigitos(valor) {
+        return String(valor || "").replace(/\D/g, "");
+    }
+
+    function chaveEstabelecimento(est) {
+        const cnpj = cnpjSomenteDigitos(est.CNPJ);
+        const endereco = normalizarChave(est.Endereco);
+        const nome = normalizarChave(est.NomeFantasia || est.Nome || "");
+        if (cnpj && endereco) return "cnpj:" + cnpj + "|endereco:" + endereco;
+        if (cnpj) return "cnpj:" + cnpj + "|nome:" + nome;
+        return "nome:" + nome + "|endereco:" + endereco;
+    }
+
+    function gerarIdSincronizacao(est) {
+        const base = chaveEstabelecimento(est);
+        let hash = 2166136261;
+        for (let i = 0; i < base.length; i++) {
+            hash ^= base.charCodeAt(i);
+            hash = Math.imul(hash, 16777619);
         }
+        return "sync_" + (hash >>> 0).toString(16);
     }
 
-    function teclaCancelarLocalizacao(evento) {
-        if (evento.key === "Escape" && modoEscolherLocalizacao) {
-            encerrarModoEscolha();
-            removerPreviaLocalizacao();
-            if (posicaoOriginalEdicao) {
-                document.getElementById("edLatitude").value = posicaoOriginalEdicao.lat;
-                document.getElementById("edLongitude").value = posicaoOriginalEdicao.lng;
-            }
-            posicaoOriginalEdicao = null;
-            document.getElementById("modalEdicao").style.display = "block";
-        }
+    function dadosParaNovoEstabelecimento(est) {
+        return {
+            ...est,
+            NomeFantasia: String(est.NomeFantasia || "").trim(),
+            Nome: String(est.Nome || "").trim(),
+            CNPJ: String(est.CNPJ || "").trim(),
+            Endereco: String(est.Endereco || "").trim(),
+            Categoria: String(est.Categoria || "").trim(),
+            Licenciado: normalizarStatus(est.Licenciado),
+            Latitude: String(est.Latitude || "").trim(),
+            Longitude: String(est.Longitude || "").trim(),
+            Foto: String(est.Foto || "").trim(),
+            criadoEm: firebase.firestore.FieldValue.serverTimestamp(),
+            criadoPor: auth.currentUser.uid,
+            origem: "sincronizacao_planilha_csv"
+        };
     }
 
-    function receberCliqueParaLocalizacao(evento) {
-        if (!modoEscolherLocalizacao || !estabelecimentoEmEdicao) return;
-
-        const lat = evento.latlng.lat;
-        const lng = evento.latlng.lng;
-        document.getElementById("edLatitude").value = lat.toFixed(7);
-        document.getElementById("edLongitude").value = lng.toFixed(7);
-
-        removerPreviaLocalizacao();
-        marcadorPreviaLocalizacao = L.marker([lat, lng], {
-            icon: L.divIcon({
-                html: '<div style="background:#2563eb;width:22px;height:22px;border-radius:50%;border:4px solid white;box-shadow:0 0 8px rgba(0,0,0,.6)"></div>',
-                className: "",
-                iconSize: [22, 22],
-                iconAnchor: [11, 11]
-            }),
-            zIndexOffset: 10000
-        }).addTo(map).bindPopup("Nova posição (ainda não salva)").openPopup();
-
-        encerrarModoEscolha();
-        posicaoOriginalEdicao = null;
-        document.getElementById("modalEdicao").style.display = "block";
-    }
-
-    document.getElementById("btnEscolherNoMapa").addEventListener("click", () => {
-        if (!usuarioEhAdmin || !estabelecimentoEmEdicao) {
-            alert("Somente o administrador pode alterar a localização.");
+    async function sincronizarNovosDaPlanilha() {
+        if (!usuarioEhAdmin || !auth.currentUser) {
+            alert("Somente o administrador pode sincronizar a planilha.");
             return;
         }
 
-        posicaoOriginalEdicao = {
-            lat: document.getElementById("edLatitude").value,
-            lng: document.getElementById("edLongitude").value
-        };
-        document.getElementById("modalEdicao").style.display = "none";
-        modoEscolherLocalizacao = true;
-        document.body.classList.add("escolhendo-localizacao");
-        document.getElementById("avisoEscolherLocalizacao").style.display = "block";
-        map.on("click", receberCliqueParaLocalizacao);
-        document.addEventListener("keydown", teclaCancelarLocalizacao);
-        map.invalidateSize();
-    });
+        const botao = document.getElementById("btnSincronizarPlanilha");
+        if (!confirm(
+            "A sincronização vai ADICIONAR somente estabelecimentos que ainda não forem encontrados no Firestore. " +
+            "Os registros já existentes não serão alterados. Deseja continuar?"
+        )) return;
+
+        botao.disabled = true;
+        const textoOriginal = botao.textContent;
+        botao.textContent = "Sincronizando...";
+
+        try {
+            informar("Lendo a planilha e comparando com o Firestore...");
+
+            const response = await fetch(sheetURL, { cache: "no-store" });
+            if (!response.ok) throw new Error("Falha ao ler CSV: HTTP " + response.status);
+            const csv = await response.text();
+            const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
+            if (parsed.errors && parsed.errors.length) {
+                console.warn("Avisos na leitura da planilha:", parsed.errors);
+            }
+            const linhas = (parsed.data || []).filter(est =>
+                String(est.NomeFantasia || est.Nome || est.CNPJ || "").trim()
+            );
+            if (!linhas.length) throw new Error("A planilha não contém estabelecimentos válidos.");
+
+            const snapshot = await colecaoEstabelecimentos.get();
+            const existentes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            const idsExistentes = new Set(snapshot.docs.map(doc => doc.id));
+            const porChave = new Map();
+            const porCnpj = new Map();
+
+            function indexar(registro) {
+                const chave = chaveEstabelecimento(registro);
+                if (!porChave.has(chave)) porChave.set(chave, []);
+                porChave.get(chave).push(registro);
+
+                const cnpj = cnpjSomenteDigitos(registro.CNPJ);
+                if (cnpj) {
+                    if (!porCnpj.has(cnpj)) porCnpj.set(cnpj, []);
+                    porCnpj.get(cnpj).push(registro);
+                }
+            }
+
+            existentes.forEach(indexar);
+
+            let batch = db.batch();
+            let noBatch = 0;
+            let adicionados = 0;
+            let jaExistiam = 0;
+            let semIdentificacao = 0;
+            const chavesVistasNaPlanilha = new Set();
+
+            for (const est of linhas) {
+                const nome = String(est.NomeFantasia || est.Nome || est.CNPJ || "").trim();
+                const endereco = String(est.Endereco || "").trim();
+                if (!nome) continue;
+
+                const chave = chaveEstabelecimento(est);
+                if (chavesVistasNaPlanilha.has(chave)) {
+                    jaExistiam++;
+                    continue;
+                }
+                chavesVistasNaPlanilha.add(chave);
+
+                let correspondencias = porChave.get(chave) || [];
+                const cnpj = cnpjSomenteDigitos(est.CNPJ);
+
+                // Se o CNPJ só aparece uma vez no banco, considera o registro correspondente
+                // mesmo que o endereço tenha sido corrigido na planilha. Se há filiais com o
+                // mesmo CNPJ, exige correspondência pela chave completa para evitar fusões.
+                if (!correspondencias.length && cnpj) {
+                    const registrosMesmoCnpj = porCnpj.get(cnpj) || [];
+                    if (registrosMesmoCnpj.length === 1) {
+                        correspondencias = registrosMesmoCnpj;
+                    }
+                }
+
+                if (correspondencias.length) {
+                    jaExistiam++;
+                    continue; // não sobrescrever alterações já feitas diretamente no Firestore
+                }
+
+                let id = gerarIdSincronizacao(est);
+                let sufixo = 2;
+                while (idsExistentes.has(id)) {
+                    id = gerarIdSincronizacao(est) + "_" + sufixo++;
+                }
+                const ref = colecaoEstabelecimentos.doc(id);
+                const novo = { id, ...dadosParaNovoEstabelecimento(est) };
+                batch.set(ref, dadosParaNovoEstabelecimento(est));
+                idsExistentes.add(id);
+                indexar(novo); // evita duplicar linhas repetidas dentro da própria planilha
+                adicionados++;
+                noBatch++;
+
+                if (noBatch === 450) {
+                    await batch.commit();
+                    batch = db.batch();
+                    noBatch = 0;
+                }
+            }
+
+            if (noBatch > 0) await batch.commit();
+            await carregarDados();
+            const resumo = `Sincronização concluída.\n\nNovos estabelecimentos adicionados: ${adicionados}\nJá existentes ou repetidos ignorados: ${jaExistiam}`;
+            informar(`Sincronização concluída: ${adicionados} novo(s), ${jaExistiam} já existente(s)/repetido(s).`);
+            alert(resumo);
+        } catch (erro) {
+            console.error("Erro ao sincronizar planilha com Firestore:", erro);
+            informar("A sincronização não foi concluída. Verifique o Console e as permissões do Firestore.");
+            alert("Não foi possível concluir a sincronização. Confira o Console do navegador e as regras do Firestore. Não alteramos intencionalmente os registros já existentes.");
+        } finally {
+            botao.disabled = false;
+            botao.textContent = textoOriginal;
+        }
+    }
+
+    document.getElementById("btnSincronizarPlanilha").addEventListener("click", sincronizarNovosDaPlanilha);
 
     function abrirEditor(id) {
         if (!usuarioEhAdmin) {
@@ -1167,16 +1263,10 @@
     }
 
     function fecharEditor() {
-        encerrarModoEscolha();
-        removerPreviaLocalizacao();
-        posicaoOriginalEdicao = null;
         document.getElementById("modalEdicao").style.display = "none";
         estabelecimentoEmEdicao = null;
     }
-    document.getElementById("btnCancelarEdicao").addEventListener("click", () => {
-        removerPreviaLocalizacao();
-        fecharEditor();
-    });
+    document.getElementById("btnCancelarEdicao").addEventListener("click", fecharEditor);
     document.getElementById("modalEdicao").addEventListener("click", e => {
         if (e.target.id === "modalEdicao") fecharEditor();
     });
@@ -1211,7 +1301,6 @@
         };
         try {
             await colecaoEstabelecimentos.doc(estabelecimentoEmEdicao._id).update(alteracoes);
-            removerPreviaLocalizacao();
             dadosGlobais = dadosGlobais.map(est => est._id === estabelecimentoEmEdicao._id ? { ...est, ...alteracoes } : est);
             fecharEditor();
             aplicarFiltros(dadosGlobais);
@@ -1520,26 +1609,33 @@ const marker = L.marker(
 
 
         // AJUSTA ZOOM
-        const pontos = markersLayer.getLayers();
 
-        if (pontos.length === 1) {
-            map.setView(pontos[0].getLatLng(), 15);
-        } else if (pontos.length > 1) {
-            const coordenadasPontos = pontos
-                .filter(ponto => typeof ponto.getLatLng === "function")
-                .map(ponto => ponto.getLatLng());
+        const pontos =
+            markersLayer.getLayers();
 
-            if (coordenadasPontos.length === 1) {
-                map.setView(coordenadasPontos[0], 15);
-            } else if (coordenadasPontos.length > 1) {
-                const bounds = L.latLngBounds(coordenadasPontos);
-                if (bounds.isValid()) {
-                    map.fitBounds(bounds, {
-                        padding: [40, 40],
-                        maxZoom: 15
-                    });
+        if(pontos.length === 1){
+
+            const ponto =
+                pontos[0].getLatLng();
+
+            map.setView(
+                ponto,
+                15
+            );
+
+        }
+        else if(pontos.length > 1){
+
+            const bounds =
+                markersLayer.getBounds();
+
+            map.fitBounds(
+                bounds,
+                {
+                    padding: [40, 40],
+                    maxZoom: 15
                 }
-            }
+            );
         }
     }
 
@@ -1653,6 +1749,7 @@ document
             usuarioEhAdmin = false;
             document.getElementById("adminBadge").style.display = "none";
             document.getElementById("btnImportarPlanilha").style.display = "none";
+            document.getElementById("btnSincronizarPlanilha").style.display = "none";
             ocultarSistema();
         }
     });
