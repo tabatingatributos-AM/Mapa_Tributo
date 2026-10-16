@@ -521,13 +521,6 @@
     <button onclick="carregarDados()">
         🔄 Atualizar
     </button>
-    <button
-    id="btnSincronizarPlanilha"
-    type="button"
-    style="display:none; background:#166534; color:white;"
-    >
-    🔄 Sincronizar novos da planilha
-</button>
     <button id="btnImportarPlanilha" type="button">Importar planilha inicial</button>
     <button id="btnSincronizarPlanilha" type="button" style="display:none; background:#166534;">🔄 Sincronizar novos da planilha</button>
 
@@ -984,9 +977,9 @@
             }
             aplicarFiltros(dadosGlobais);
         } catch (erro) {
-            console.error("Erro ao carregar Firestore:", erro);
-            informar("Falha ao carregar dados. Confira a conexão e as regras do Firestore.");
-            alert("Não foi possível carregar os estabelecimentos do Firestore. Confira as regras de segurança e a conexão.");
+            console.error("Erro ao carregar dados ou atualizar o mapa:", erro);
+            informar("Falha ao carregar ou exibir os estabelecimentos. Consulte o Console para identificar a causa.");
+            alert("Ocorreu uma falha ao carregar os dados ou atualizar o mapa. Consulte o Console do navegador para ver o erro específico.");
         }
     }
 
@@ -1633,8 +1626,9 @@ const marker = L.marker(
         }
         else if(pontos.length > 1){
 
-            const bounds =
-                markersLayer.getBounds();
+            // LayerGroup não possui getBounds(); FeatureGroup temporário calcula
+            // os limites usando os marcadores já filtrados.
+            const bounds = L.featureGroup(pontos).getBounds();
 
             map.fitBounds(
                 bounds,
